@@ -64,12 +64,9 @@ def pin_changed(pin,value):
   global time_of_last_light_reading 
   global topic
 
-	if __debug__:
-		logit(f'DEBUG: Pin: { pin } value: { value }')
+  if __debug__:
+    logit(f'DEBUG: Pin: { pin } value: { value }')
 
-  #
-  # Touch file to indicate service is actively publishing
-  Path('/tmp/microbit_active').touch()
   if (pin == 0): 
       difference = (datetime.datetime.now() - time_of_last_light_reading ).total_seconds()
       if (difference >= 30): 
@@ -79,26 +76,54 @@ def pin_changed(pin,value):
           sendmqtt(ubit.temperature, topic + "/" + "temperature", False)
           time_of_last_light_reading = datetime.datetime.now()
       else:
-				if __debug__:
+        if __debug__:
           logit(f'DEBUG: Too soon for light level { value } - diff { difference } ') 
 
 #================================================================
 # Hearbeat Timer
 # --------------
 def heartbeat_timer(): 
+  global topic
+  global ubit
+
   if __debug__:
-		logit('DEBUG: heartbeat timer tick ')
+    logit('DEBUG: heartbeat timer tick ')
     light = ubit.pin_values["0"] 
     logit(f'DEBUG: light level { light }') 
+
+  if (not ubit.connected):
+    sendmqtt("Heartbeat_Lost_Connection_To_Microbit", topic + "/" + "status", True)
+    raise Exception('Heartbeat found microbit had disconnected')
+  #
+  # Touch file to indicate service is actively publishing
+  Path('/tmp/microbit_heartbeat').touch()
+  #
+  # Publish heartbeat
+  sendmqtt(datetime.datetime.now().strftime("%Y/%m/%d, %H:%M:%S"), topic + "/" + "heartbeat", False)
   return True
+
+#================================================================
+# disconnect
+# ----------
+def disconnect(): 
+  global topic
+  global ubit
+
+  sendmqtt("Disconnecting", topic + "/" + "status", True)
+  logit("Disconnecting")
+  ubit.disconnect()
+  sendmqtt("Disconnected", topic + "/" + "status", True)
 
 #================================================================
 # connect_to_microbit
 # -------------------
 def connect_to_microbit(): 
+  global topic
+  global ubit
+
   while (not ubit.connected):
     try:
-			ubit.connect()
+      ubit.connect()
 
     except dbus.exceptions.DBusException:
         pass
@@ -146,13 +171,12 @@ url = urllib.parse.urlparse(url_str)
 topic="homeassistant/microbit"
 time_of_last_light_reading = datetime.datetime.now() 
 
+sendmqtt("Starting", topic + "/" + "status", True)
 #
 # Setup heartbeat timer 
 #
 #https://bluezero.readthedocs.io/en/v0.4.0/shared.html#module-bluezero.async_tools
-async_tools.add_timer_seconds(5,heartbeat_timer)
-eloop = async_tools.EventLoop() 
-#eloop.run()
+async_tools.add_timer_seconds(10,heartbeat_timer)
 
 #
 # Connect to Microbit
@@ -165,7 +189,7 @@ try:
 # Set up Microbit
 #
   print(f'Services: { ubit.services_available() }')
-
+  sleep(2)    # Wait for microbit to settle
   logit("Enable pin 0:")
   ubit.set_pin(0, True, True)
 
@@ -186,14 +210,8 @@ try:
     if (not ubit.connected):
       connect_to_microbit() 
 
-
-
-
-
 except KeyboardInterrupt:
   logit("Cancelled by user")
 
 finally  :
-  logit("Disconnecting")
-  sendmqtt("Disconnected", topic + "/" + "status", True)
-  ubit.disconnect()
+  disconnect()
