@@ -1,0 +1,83 @@
+#!/usr/bin/env python
+
+from time import time, sleep
+import datetime
+import os	          # For running external commands
+import RPi.GPIO as GPIO
+import urlparse
+import paho.mqtt.client as paho
+
+PIR_PIN1 = 18
+PIR_PIN2 = 17
+TOPIC_STAIRS = "homeassistant/pir/stairs" 
+TOPIC_FRONT_DOOR = "homeassistant/pir/front_door" 
+
+# Setup Gpio
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+
+GPIO.setup(PIR_PIN1, GPIO.IN)
+GPIO.setup(PIR_PIN2, GPIO.IN)
+
+## pins = {18: "homeassistant/pir/stairs", 17: "homeassistant/pir/front_door"}
+## GPIO.setup(pins.keys(), GPIO.IN)
+
+# Mqtt 
+mqttc = paho.Client()
+
+###  url_str = 'mqtt://192.168.0.98:1883'
+url_str = 'mqtt://home.local:1883'
+url = urlparse.urlparse(url_str)
+### mqttc.username_pw_set("user", "password")
+
+need_to_cancel_motion=False
+already_in_motion_event=False
+
+def motion_detected_stairs(PIR_PIN):
+  global TOPIC_STAIRS 
+  motion_detected(PIR_PIN, TOPIC_STAIRS )
+
+def motion_detected_front_door(PIR_PIN):
+  global TOPIC_FRONT_DOOR 
+  motion_detected(PIR_PIN, TOPIC_FRONT_DOOR )
+
+def motion_detected(PIR_PIN1, topic):
+    global need_to_cancel_motion 
+
+#    print " - callback"
+    if (GPIO.input(PIR_PIN1 )):
+###        if ( need_to_cancel_motion == False): # don't alert if we already did 
+          now = datetime.datetime.now()
+          print str(now) + " - motion detected " + topic
+          sendmqtt("motion", topic)
+          need_to_cancel_motion=True
+    else:                                    
+###        if ( need_to_cancel_motion):
+          sendmqtt("no_motion", topic)
+          now = datetime.datetime.now()
+          print str(now) + " - no motion " + topic
+          need_to_cancel_motion=False
+
+def sendmqtt(mess,topic):
+    mqttc.connect(url.hostname, url.port)
+    mqttc.publish(topic, mess)
+
+# Add callbacks
+GPIO.add_event_detect(PIR_PIN1, GPIO.BOTH, callback=motion_detected_stairs, bouncetime=150)
+GPIO.add_event_detect(PIR_PIN2, GPIO.BOTH, callback=motion_detected_front_door, bouncetime=150)
+
+try:
+  sendmqtt("Connected", TOPIC_STAIRS)
+  sendmqtt("Connected", TOPIC_FRONT_DOOR)
+  now = datetime.datetime.now()
+  print str(now) + " - connected"
+
+  while True:
+    sleep(1)    # Dont send too many messages
+
+except KeyboardInterrupt:
+  print " Quit"
+  sendmqtt("Disconnected", TOPIC_STAIRS)
+  sendmqtt("Disconnected", TOPIC_FRONT_DOOR)
+finally  :
+  GPIO.cleanup()
